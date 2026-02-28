@@ -18,15 +18,24 @@ class DashboardManager {
     }
 
     async loadBusinessesFromAPI() {
-        if (this.businesses.size > 0) return; // Already populated via WebSocket
+        if (this.businesses.size > 0 && !this.pollingMode) return; // Already populated via WebSocket
         try {
             const response = await fetch('/api/businesses');
             const data = await response.json();
+            console.log('[API] Loaded businesses:', data);
             const list = data.businesses || data;
-            if (Array.isArray(list)) {
-                list.forEach(b => this.businesses.set(b.id, b));
+            if (Array.isArray(list) && list.length > 0) {
+                list.forEach(b => {
+                    const id = b.id || b.lead_id;
+                    if (id) {
+                        this.businesses.set(id, b);
+                        // Render card if not already in DOM
+                        this.renderBusinessCard(b);
+                    }
+                });
                 this.attachClickHandlersToExistingCards();
                 this.updateStats();
+                console.log(`[API] Rendered ${list.length} business cards`);
             }
         } catch (e) {
             console.warn('Could not load businesses from API:', e);
@@ -146,16 +155,25 @@ class DashboardManager {
         const columnId = this.getColumnIdForStatus(status);
         const container = document.getElementById(columnId);
         
-        if (!container) return;
+        console.log(`[RENDER] Business: ${business.name}, status: ${status}, column: ${columnId}, container found: ${!!container}`);
+        
+        if (!container) {
+            console.warn(`Container ${columnId} not found!`);
+            return;
+        }
         
         // Check if card already exists
-        const existingCard = container.querySelector(`[data-business-id="${business.id}"]`);
-        if (existingCard) return;
+        const businessId = business.id || business.lead_id;
+        const existingCard = container.querySelector(`[data-business-id="${businessId}"]`);
+        if (existingCard) {
+            console.log(`[RENDER] Card already exists for ${businessId}`);
+            return;
+        }
         
         // Create a simple card
         const card = document.createElement('div');
         card.className = 'business-card bg-gray-800 rounded-lg p-4 mb-3 border border-gray-700';
-        card.setAttribute('data-business-id', business.id);
+        card.setAttribute('data-business-id', businessId);
         card.innerHTML = `
             <h4 class="font-semibold text-white">${business.name || 'Unknown Business'}</h4>
             <p class="text-sm text-gray-400">${business.address || ''}</p>
@@ -163,20 +181,28 @@ class DashboardManager {
             ${business.industry ? `<p class="text-xs text-blue-400">${business.industry}</p>` : ''}
         `;
         container.appendChild(card);
+        console.log(`[RENDER] Card created for ${business.name}`);
     }
     
     getColumnIdForStatus(status) {
-        switch (status) {
-            case 'found': return 'lead-finder-content';
+        // Normalize status to lowercase for matching
+        const s = (status || 'found').toLowerCase().replace(/_/g, '');
+        switch (s) {
+            case 'found': 
+                return 'lead-finder-content';
             case 'contacted':
             case 'engaged':
-            case 'engaged_sdr': return 'sdr-content';
+            case 'engagedsdr': 
+                return 'sdr-content';
             case 'converting':
-            case 'not_interested':
-            case 'no_response': return 'lead-manager-content';
-            case 'meeting_scheduled':
-            case 'confirmed': return 'calendar-content';
-            default: return 'lead-finder-content';
+            case 'notinterested':
+            case 'noresponse': 
+                return 'lead-manager-content';
+            case 'meetingscheduled':
+            case 'confirmed': 
+                return 'meeting-scheduled-content';
+            default: 
+                return 'lead-finder-content';
         }
     }
     

@@ -137,11 +137,13 @@ static_dir = module_dir / "static"
 # Ensure static directory exists (for Cloud Run)
 if not static_dir.exists():
     logger.warning(f"Static directory not found at {static_dir}, searching alternative paths...")
-    # Try alternative paths for Cloud Run deployment
+    # Try alternative paths for Cloud Run and Vercel deployment
     alternative_paths = [
         Path("/app/sales_shortcut/ui_client/static"),
         Path("/app/ui_client/static"),
-        module_dir.parent / "ui_client" / "static"
+        module_dir.parent / "ui_client" / "static",
+        Path("/var/task/ui_client/static"),  # Vercel serverless path
+        Path(__file__).parent / "static",  # Direct relative path
     ]
     for alt_path in alternative_paths:
         if alt_path.exists():

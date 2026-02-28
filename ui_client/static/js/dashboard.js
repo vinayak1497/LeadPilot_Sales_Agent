@@ -83,7 +83,8 @@ class DashboardManager {
     
     scheduleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.log('Max reconnection attempts reached');
+            console.log('Max reconnection attempts reached - switching to HTTP polling mode');
+            this.startPollingMode();
             return;
         }
         
@@ -98,6 +99,85 @@ class DashboardManager {
             this.reconnectAttempts++;
             this.initializeWebSocket();
         }, delay);
+    }
+    
+    startPollingMode() {
+        console.log('Starting HTTP polling mode (WebSocket not available)');
+        this.pollingMode = true;
+        this.updateConnectionStatus(true, 'polling');
+        
+        // Initial load
+        this.pollBusinesses();
+        
+        // Poll every 5 seconds
+        this.pollingInterval = setInterval(() => {
+            this.pollBusinesses();
+        }, 5000);
+    }
+    
+    async pollBusinesses() {
+        try {
+            const response = await fetch('/api/businesses');
+            const data = await response.json();
+            const list = data.businesses || data;
+            
+            if (Array.isArray(list)) {
+                // Clear and reload businesses
+                this.businesses.clear();
+                list.forEach(b => {
+                    const id = b.id || b.lead_id;
+                    if (id) {
+                        this.businesses.set(id, b);
+                        // Render card if not already present
+                        this.renderBusinessCard(b);
+                    }
+                });
+                this.attachClickHandlersToExistingCards();
+                this.updateStats();
+                console.log(`[POLLING] Loaded ${list.length} businesses from API`);
+            }
+        } catch (e) {
+            console.warn('Polling failed:', e);
+        }
+    }
+    
+    renderBusinessCard(business) {
+        const status = (business.status || 'found').toLowerCase();
+        const columnId = this.getColumnIdForStatus(status);
+        const container = document.getElementById(columnId);
+        
+        if (!container) return;
+        
+        // Check if card already exists
+        const existingCard = container.querySelector(`[data-business-id="${business.id}"]`);
+        if (existingCard) return;
+        
+        // Create a simple card
+        const card = document.createElement('div');
+        card.className = 'business-card bg-gray-800 rounded-lg p-4 mb-3 border border-gray-700';
+        card.setAttribute('data-business-id', business.id);
+        card.innerHTML = `
+            <h4 class="font-semibold text-white">${business.name || 'Unknown Business'}</h4>
+            <p class="text-sm text-gray-400">${business.address || ''}</p>
+            ${business.phone ? `<p class="text-sm text-gray-400">${business.phone}</p>` : ''}
+            ${business.industry ? `<p class="text-xs text-blue-400">${business.industry}</p>` : ''}
+        `;
+        container.appendChild(card);
+    }
+    
+    getColumnIdForStatus(status) {
+        switch (status) {
+            case 'found': return 'lead-finder-content';
+            case 'contacted':
+            case 'engaged':
+            case 'engaged_sdr': return 'sdr-content';
+            case 'converting':
+            case 'not_interested':
+            case 'no_response': return 'lead-manager-content';
+            case 'meeting_scheduled':
+            case 'confirmed': return 'calendar-content';
+            default: return 'lead-finder-content';
+        }
     }
     
     handleWebSocketMessage(data) {
@@ -645,9 +725,19 @@ class DashboardManager {
         console.log('Error toast muted:', message);
     }
     
-    updateConnectionStatus(isConnected) {
-        // You can add visual feedback for connection status here
-        console.log(`Connection status: ${isConnected ? 'Connected' : 'Disconnected'}`);
+    updateConnectionStatus(isConnected, mode = 'websocket') {
+        // Visual feedback for connection status
+        const statusText = mode === 'polling' 
+            ? 'Connected (polling)' 
+            : (isConnected ? 'Connected' : 'Disconnected');
+        console.log(`Connection status: ${statusText}`);
+        
+        // Update any connection indicator in UI if present
+        const indicator = document.getElementById('connection-status');
+        if (indicator) {
+            indicator.textContent = statusText;
+            indicator.className = isConnected || mode === 'polling' ? 'text-green-400' : 'text-red-400';
+        }
     }
     
     formatDateTime(dateTimeString) {

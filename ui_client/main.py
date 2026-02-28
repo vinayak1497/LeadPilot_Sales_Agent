@@ -1556,12 +1556,48 @@ async def start_lead_finding(city: str = Form(...)):
 
 
 @app.get("/api/businesses")
-async def get_businesses():
-    """API endpoint to get all businesses."""
-    return {
-        "businesses": [business.dict() for business in app_state["businesses"].values()],
-        "total": len(app_state["businesses"])
-    }
+async def get_businesses(request: Request):
+    """API endpoint to get all businesses. Falls back to Firebase on serverless."""
+    # First try in-memory state (works locally and on persistent servers)
+    if app_state["businesses"]:
+        return {
+            "businesses": [business.dict() for business in app_state["businesses"].values()],
+            "total": len(app_state["businesses"])
+        }
+    
+    # Fallback to Firebase (for Vercel serverless where in-memory state doesn't persist)
+    if BIGQUERY_AVAILABLE:
+        try:
+            user_id = "anonymous"
+            if AUTH_AVAILABLE:
+                user = await get_current_user(request)
+                if user:
+                    user_id = user.get("sub", "anonymous")
+            
+            fb_service = get_firebase_service()
+            if fb_service.is_available():
+                leads = await fb_service.get_leads_by_user(user_id)
+                # Convert Firebase leads to business format for dashboard
+                businesses = []
+                for lead in leads:
+                    businesses.append({
+                        "id": lead.get("lead_id", lead.get("id", "")),
+                        "name": lead.get("business_name", ""),
+                        "address": lead.get("business_address", ""),
+                        "phone": lead.get("business_phone", ""),
+                        "website": lead.get("business_website", ""),
+                        "city": lead.get("business_city", ""),
+                        "industry": lead.get("industry", ""),
+                        "status": lead.get("status", "found").lower(),
+                        "sdr_email": lead.get("sdr_email_subject"),
+                        "meeting_datetime": lead.get("meeting_datetime"),
+                        "meeting_link": lead.get("meeting_link"),
+                    })
+                return {"businesses": businesses, "total": len(businesses), "source": "firebase"}
+        except Exception as e:
+            logger.warning(f"Firebase fallback failed: {e}")
+    
+    return {"businesses": [], "total": 0}
 
 @app.get("/api/leads/history")
 async def get_leads_history(request: Request, status: Optional[str] = None):

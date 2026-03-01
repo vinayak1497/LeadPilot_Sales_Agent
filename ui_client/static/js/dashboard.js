@@ -747,8 +747,14 @@ class DashboardManager {
     }
     
     showErrorToast(message) {
-        // Error toasts are muted - only log to console
-        console.log('Error toast muted:', message);
+        console.error('Error:', message);
+        // Show a visible toast for errors
+        const toast = document.createElement('div');
+        toast.className = 'toast-notification toast-error';
+        toast.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
+        toast.style.cssText = 'position:fixed;top:20px;right:20px;z-index:100000;background:#dc3545;color:#fff;padding:14px 22px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(220,53,69,0.4);display:flex;align-items:center;gap:8px;animation:slideIn 0.3s ease;max-width:400px;';
+        document.body.appendChild(toast);
+        setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 4000);
     }
     
     updateConnectionStatus(isConnected, mode = 'websocket') {
@@ -1029,6 +1035,12 @@ class DashboardManager {
                 </button>
                 <button class="btn-small btn-success" onclick="event.stopPropagation(); dashboardManagerInstance.showEmailDraftDialog(dashboardManagerInstance.businesses.get('${business.id}'))">
                     <i class="fas fa-envelope"></i> Send Email
+                </button>
+                <button class="btn-small btn-whatsapp" 
+                    onclick="event.stopPropagation(); dashboardManagerInstance.showWhatsAppDialog('${business.id}')"
+                    title="Send WhatsApp message">
+                    <svg class="wa-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    <span class="wa-btn-text">WhatsApp</span>
                 </button>
                 <button class="btn-small btn-website" onclick="event.stopPropagation(); dashboardManagerInstance.showWebsitePromptDialog('${business.id}')">
                     <i class="fas fa-magic"></i> Create Website
@@ -2888,6 +2900,182 @@ Please create a complete, production-ready website that ${businessName} can use 
     showInfoToast(message) {
         this.showToast(message, 'info');
     }
+
+    // ===== WhatsApp Sending =====
+    async showWhatsAppDialog(businessId) {
+        const business = this.businesses.get(businessId);
+        if (!business) {
+            this.showErrorToast('Business not found');
+            return;
+        }
+
+        // Remove any existing WhatsApp dialog
+        const existing = document.getElementById('whatsapp-dialog-overlay');
+        if (existing) existing.remove();
+
+        // Build the modal HTML
+        const modalHtml = `
+            <div class="modal-overlay" id="whatsapp-dialog-overlay" onclick="dashboardManagerInstance.closeWhatsAppDialog(event)">
+                <div class="modal-dialog wa-dialog" onclick="event.stopPropagation()">
+                    <div class="modal-header wa-dialog-header">
+                        <h3>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#25D366" style="vertical-align:middle;margin-right:8px;">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                            </svg>
+                            Send WhatsApp — ${this.escapeHtml(business.name)}
+                        </h3>
+                        <button class="modal-close" onclick="dashboardManagerInstance.closeWhatsAppDialog()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="modal-content">
+                        <div class="business-info" style="background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                <div><strong>Business:</strong> ${this.escapeHtml(business.name)}</div>
+                                <div><strong>Location:</strong> ${this.escapeHtml(business.city || 'N/A')}</div>
+                            </div>
+                        </div>
+
+                        <label for="wa-phone-input" style="display:block;margin-bottom:8px;font-weight:600;">
+                            <i class="fas fa-phone"></i> Phone Number (editable):
+                        </label>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <input id="wa-phone-input" type="tel" 
+                                placeholder="Loading phone number…" 
+                                style="flex:1;padding:12px 14px;border:1px solid #ddd;border-radius:8px;font-size:15px;"
+                                disabled />
+                            <span id="wa-phone-spinner" style="color:#888;"><i class="fas fa-spinner fa-spin"></i></span>
+                        </div>
+                        <div id="wa-phone-hint" style="font-size:12px;color:#888;margin-top:6px;">
+                            Fetching phone from Google Places API…
+                        </div>
+
+                        <div style="background:#fff3cd;padding:12px;border-radius:5px;margin-top:18px;border-left:4px solid #ffc107;">
+                            <strong>📱 Note:</strong> Verify the phone number before sending. Include the country code (e.g. +91 for India).
+                        </div>
+                    </div>
+                    <div class="modal-actions" style="border-top:1px solid #ddd;padding-top:15px;margin-top:15px;">
+                        <button class="btn-secondary" onclick="dashboardManagerInstance.closeWhatsAppDialog()">
+                            <i class="fas fa-times"></i> Cancel
+                        </button>
+                        <button id="wa-send-btn" class="btn-primary" 
+                            style="background:#25D366;border-color:#25D366;" 
+                            onclick="dashboardManagerInstance.confirmSendWhatsApp('${business.id}')" disabled>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:6px;">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                            </svg>
+                            Send WhatsApp
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // Fetch phone number asynchronously
+        this._fetchPhoneForDialog(businessId, business.phone);
+    }
+
+    async _fetchPhoneForDialog(businessId, knownPhone) {
+        const phoneInput = document.getElementById('wa-phone-input');
+        const spinner = document.getElementById('wa-phone-spinner');
+        const hint = document.getElementById('wa-phone-hint');
+        const sendBtn = document.getElementById('wa-send-btn');
+
+        try {
+            // If we already have a phone, pre-fill immediately
+            if (knownPhone) {
+                phoneInput.value = knownPhone;
+                phoneInput.disabled = false;
+                sendBtn.disabled = false;
+                if (spinner) spinner.style.display = 'none';
+                if (hint) hint.textContent = 'Phone loaded from lead data. You can edit if needed.';
+            }
+
+            // Still try the API for a potentially better number
+            const resp = await fetch(`/api/leads/${encodeURIComponent(businessId)}/phone`);
+            const data = await resp.json();
+
+            if (data.phone) {
+                // Only overwrite if input is empty or was the original knownPhone
+                if (!phoneInput.value || phoneInput.value === knownPhone) {
+                    phoneInput.value = data.phone;
+                }
+                if (hint) hint.textContent = `Phone found via ${data.source || 'API'}. You can edit if needed.`;
+            } else if (!knownPhone) {
+                if (hint) hint.textContent = 'No phone found. Please enter the number manually.';
+            }
+        } catch (err) {
+            console.warn('Failed to fetch phone:', err);
+            if (!knownPhone) {
+                if (hint) hint.textContent = 'Could not fetch phone. Please enter manually.';
+            }
+        } finally {
+            phoneInput.disabled = false;
+            sendBtn.disabled = false;
+            if (spinner) spinner.style.display = 'none';
+            phoneInput.placeholder = '+91XXXXXXXXXX';
+            phoneInput.focus();
+        }
+    }
+
+    closeWhatsAppDialog(event) {
+        if (event && event.target !== event.currentTarget) return;
+        const overlay = document.getElementById('whatsapp-dialog-overlay');
+        if (overlay) overlay.remove();
+    }
+
+    async confirmSendWhatsApp(businessId) {
+        const phoneInput = document.getElementById('wa-phone-input');
+        const sendBtn = document.getElementById('wa-send-btn');
+        const phone = (phoneInput ? phoneInput.value : '').trim();
+
+        if (!phone) {
+            this.showErrorToast('Please enter a phone number');
+            if (phoneInput) phoneInput.focus();
+            return;
+        }
+
+        // Disable button during send
+        sendBtn.disabled = true;
+        const origText = sendBtn.innerHTML;
+        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+
+        try {
+            const resp = await fetch('/api/send-whatsapp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lead_id: businessId, phone_override: phone })
+            });
+            const data = await resp.json();
+
+            if (data.success) {
+                this.showSuccessToast('WhatsApp message sent successfully!');
+                // Update the SDR card button to show "Sent"
+                const cardBtn = document.querySelector(`.sdr-card[data-business-id="${businessId}"] .btn-whatsapp`);
+                if (cardBtn) {
+                    cardBtn.innerHTML = '<svg class="wa-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> <span class="wa-btn-text">Sent!</span>';
+                    cardBtn.classList.add('btn-whatsapp-sent');
+                    setTimeout(() => {
+                        cardBtn.innerHTML = '<svg class="wa-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg> <span class="wa-btn-text">WhatsApp</span>';
+                        cardBtn.classList.remove('btn-whatsapp-sent');
+                    }, 3000);
+                }
+                this.closeWhatsAppDialog();
+            } else {
+                this.showErrorToast(data.error || 'Failed to send WhatsApp');
+                sendBtn.innerHTML = origText;
+                sendBtn.disabled = false;
+            }
+        } catch (err) {
+            console.error('WhatsApp send error:', err);
+            this.showErrorToast('Network error sending WhatsApp');
+            sendBtn.innerHTML = origText;
+            sendBtn.disabled = false;
+        }
+    }
+    // ===== End WhatsApp =====
     
     updateColumnCount(countId, count) {
         const countElement = document.getElementById(countId);

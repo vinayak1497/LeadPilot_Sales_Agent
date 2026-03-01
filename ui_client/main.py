@@ -216,6 +216,38 @@ class ScheduleMeetingRequest(BaseModel):
     attendee_email: Optional[str] = Field(None, description="Optional attendee email")
     description: Optional[str] = Field(None, description="Meeting description/agenda")
 
+class SendWhatsAppRequest(BaseModel):
+    """Request model for sending a WhatsApp message to a lead."""
+    lead_id: str = Field(..., description="The ID of the lead/business")
+    phone_override: Optional[str] = Field(None, description="User-edited phone number (overrides stored value)")
+
+# n8n WhatsApp Webhook URL (keep server-side only — never expose to frontend)
+N8N_WHATSAPP_WEBHOOK_URL = os.getenv(
+    "N8N_WHATSAPP_WEBHOOK_URL",
+    "https://n8n.rookiesn8n.me/webhook/leadpilot-send-whatsapp"
+)
+
+import re
+
+def normalize_phone(phone: str, default_country_code: str = "91") -> Optional[str]:
+    """
+    Normalize a phone number for WhatsApp delivery.
+
+    - Strips spaces, dashes, parentheses, dots
+    - Removes leading '+'
+    - Prepends default country code if the number doesn't already start with one
+    - Returns None if the result is empty or too short
+    """
+    if not phone:
+        return None
+    cleaned = re.sub(r"[\s\-\(\)\.\+]", "", phone)
+    if not cleaned or len(cleaned) < 7:
+        return None
+    # If the number doesn't start with a country code, prepend default
+    if not cleaned.startswith(default_country_code) and len(cleaned) <= 10:
+        cleaned = default_country_code + cleaned
+    return cleaned
+
 # Global application state
 app_state = {
     "is_running": False,
@@ -2551,6 +2583,189 @@ async def send_email_endpoint(
             status_code=500,
             content={"success": False, "error": f"Failed to send email: {str(e)}"}
         )
+
+
+# ===== WhatsApp via n8n =====
+
+@app.post("/api/send-whatsapp")
+async def send_whatsapp_endpoint(request: Request, payload: SendWhatsAppRequest):
+    """
+    Send a WhatsApp message to a lead via the n8n webhook.
+    Requires authenticated user. The webhook URL is never exposed to the frontend.
+    """
+    # --- Authentication (lenient — proceed even without auth) ---
+    user = None
+    freelancer_name = "LeadPilot User"
+    if AUTH_AVAILABLE:
+        try:
+            user = await get_current_user(request)
+            if user:
+                freelancer_name = (
+                    user.get("name")
+                    or user.get("given_name")
+                    or user.get("email", "").split("@")[0]
+                    or "LeadPilot User"
+                )
+            else:
+                logger.warning("WhatsApp send: user not authenticated, proceeding anyway")
+        except Exception as auth_err:
+            logger.warning(f"WhatsApp send: auth check failed ({auth_err}), proceeding anyway")
+
+    lead_id = payload.lead_id
+
+    # --- Resolve lead from in-memory state or Firebase ---
+    business = None
+    lead_data: Dict[str, Any] = {}
+
+    if lead_id in app_state["businesses"]:
+        business = app_state["businesses"][lead_id]
+        lead_data = business.model_dump() if hasattr(business, "model_dump") else business.dict()
+    elif FIREBASE_AVAILABLE:
+        try:
+            fb_service = get_firebase_service()
+            if fb_service.is_available():
+                user_id = user.get("sub", "anonymous") if user else "anonymous"
+                leads = await fb_service.get_leads_by_user(user_id)
+                for ld in leads:
+                    if ld.get("lead_id") == lead_id or ld.get("id") == lead_id:
+                        lead_data = ld
+                        break
+        except Exception as fb_err:
+            logger.warning(f"Firebase lookup failed: {fb_err}")
+
+    if not lead_data and business is None:
+        return JSONResponse(status_code=404, content={"success": False, "error": "Lead not found"})
+
+    # --- Validate phone (prefer user-edited override) ---
+    raw_phone = payload.phone_override or ""
+    if not raw_phone:
+        raw_phone = (
+            lead_data.get("phone")
+            or lead_data.get("international_phone")
+            or lead_data.get("business_phone")
+            or (business.phone if business else "")
+            or ""
+        )
+    phone = normalize_phone(raw_phone)
+    if not phone:
+        return JSONResponse(status_code=400, content={"success": False, "error": "Phone number not available for this lead"})
+
+    # --- Build webhook payload ---
+    webhook_payload = {
+        "lead_name": lead_data.get("name") or lead_data.get("business_name") or (business.name if business else ""),
+        "phone": phone,
+        "demo_link": lead_data.get("demo_link") or lead_data.get("website") or "",
+        "city": lead_data.get("city") or lead_data.get("business_city") or (business.city if business else ""),
+        "freelancer_name": freelancer_name,
+    }
+
+    # --- Call n8n webhook ---
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(N8N_WHATSAPP_WEBHOOK_URL, json=webhook_payload)
+            if resp.status_code != 200:
+                logger.error(f"n8n webhook returned {resp.status_code}: {resp.text}")
+                return JSONResponse(
+                    status_code=502,
+                    content={"success": False, "error": f"Webhook returned status {resp.status_code}"}
+                )
+            try:
+                n8n_response = resp.json()
+            except Exception:
+                n8n_response = {"raw": resp.text}
+    except httpx.TimeoutException:
+        logger.error("n8n webhook timed out")
+        return JSONResponse(status_code=504, content={"success": False, "error": "WhatsApp webhook timed out"})
+    except Exception as e:
+        logger.error(f"n8n webhook call failed: {e}", exc_info=True)
+        return JSONResponse(status_code=502, content={"success": False, "error": f"Webhook error: {str(e)}"})
+
+    # --- Persist & notify ---
+    biz_name = webhook_payload["lead_name"]
+    if business:
+        business.notes.append(f"WhatsApp sent to {phone} at {datetime.now().isoformat()}")
+
+    await manager.send_update({
+        "type": "whatsapp_sent",
+        "business_id": lead_id,
+        "business_name": biz_name,
+        "phone": phone,
+        "message": f"WhatsApp message sent to {biz_name}",
+        "timestamp": datetime.now().isoformat(),
+    })
+
+    logger.info(f"✅ WhatsApp sent to {biz_name} ({phone})")
+    return JSONResponse(status_code=200, content={"success": True, "message": f"WhatsApp sent to {biz_name}", "response": n8n_response})
+
+
+@app.get("/api/leads/{lead_id}/phone")
+async def get_lead_phone(lead_id: str, request: Request):
+    """
+    Fetch or look up the phone number for a lead.
+    Tries in-memory state first, then Places API via place_id.
+    """
+    phone = ""
+    name = ""
+    city = ""
+    source = "none"
+
+    # 1) Check in-memory state
+    if lead_id in app_state["businesses"]:
+        biz = app_state["businesses"][lead_id]
+        phone = biz.phone or ""
+        name = biz.name or ""
+        city = biz.city or ""
+        if phone:
+            source = "lead data"
+
+    # 2) If no phone, try Google Places API using place_id
+    if not phone and DIRECT_SEARCH_AVAILABLE:
+        try:
+            from .direct_search import get_direct_search, GOOGLE_MAPS_API_KEY
+            search = get_direct_search()
+            if search._ensure_client() and search.client:
+                details = search.client.place(
+                    place_id=lead_id,
+                    fields=['international_phone_number', 'formatted_phone_number', 'name']
+                )
+                result = details.get('result', {})
+                phone = result.get('international_phone_number') or result.get('formatted_phone_number', '')
+                if phone:
+                    source = "Google Places API"
+                if not name:
+                    name = result.get('name', '')
+                logger.info(f"Places API phone lookup for {lead_id}: {phone}")
+        except Exception as e:
+            logger.warning(f"Places API phone lookup failed for {lead_id}: {e}")
+
+    # 3) Fallback to Firebase
+    if not phone and FIREBASE_AVAILABLE:
+        try:
+            user = None
+            if AUTH_AVAILABLE:
+                user = await get_current_user(request)
+            user_id = user.get("sub", "anonymous") if user else "anonymous"
+            fb_service = get_firebase_service()
+            if fb_service.is_available():
+                leads = await fb_service.get_leads_by_user(user_id)
+                for ld in leads:
+                    if ld.get("lead_id") == lead_id or ld.get("id") == lead_id:
+                        phone = ld.get("business_phone") or ld.get("phone") or ""
+                        if phone:
+                            source = "Firebase"
+                        name = name or ld.get("business_name", "")
+                        city = city or ld.get("business_city", "")
+                        break
+        except Exception as e:
+            logger.warning(f"Firebase phone lookup failed: {e}")
+
+    return JSONResponse(content={
+        "success": True,
+        "phone": phone,
+        "name": name,
+        "city": city,
+        "source": source,
+    })
 
 
 @app.post("/send_confirmation_email")

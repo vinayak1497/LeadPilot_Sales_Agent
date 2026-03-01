@@ -138,6 +138,7 @@ class DirectGoogleMapsSearch:
                                 place_id=place_id,
                                 fields=[
                                     'name', 'formatted_address', 'formatted_phone_number',
+                                    'international_phone_number',
                                     'website', 'rating', 'user_ratings_total', 'price_level',
                                     'opening_hours', 'business_status', 'geometry', 'types'
                                 ]
@@ -191,8 +192,9 @@ class DirectGoogleMapsSearch:
                             "name": place_info.get('name', place.get('name', 'Unknown')),
                             "address": place_info.get('formatted_address', place.get('vicinity', '')),
                             
-                            # Contact information
-                            "phone": place_info.get('formatted_phone_number', ''),
+                            # Contact information (prefer international format)
+                            "phone": place_info.get('international_phone_number') or place_info.get('formatted_phone_number', ''),
+                            "international_phone": place_info.get('international_phone_number', ''),
                             "website": website or None,  # None for leads without websites
                             
                             # Business metrics
